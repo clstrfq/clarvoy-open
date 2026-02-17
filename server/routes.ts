@@ -10,6 +10,25 @@ import { streamLLMResponse, PROVIDER_INFO, type LLMProvider } from "./services/l
 import { extractTextFromBuffer, isParseableType } from "./services/documentParser";
 import { fileStorage } from "./services/fileStorage";
 import multer from "multer";
+import {
+  einSchema,
+  charitySearchParamsSchema,
+  grantDiscoverInputSchema,
+  grantAgenciesInputSchema,
+  grantTrendsInputSchema,
+  grantAlertListParamsSchema,
+  grantAlertStatusUpdateSchema,
+} from "@shared/mcp-schemas";
+import {
+  charityLookup,
+  charitySearch,
+  publicCharityCheck,
+  opportunityDiscovery,
+  agencyLandscape,
+  fundingTrendScanner,
+  getMcpStatus,
+  McpToolError,
+} from "./services/mcpClient";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -166,7 +185,7 @@ export async function registerRoutes(
   app.post("/api/coaching/chat", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
 
-    const { message, decisionId, provider = "openai" } = req.body;
+    const { message, decisionId, provider = "openai", mcpEnrich = false } = req.body;
     if (!message) return res.status(400).json({ message: "Message is required" });
 
     const validProviders: LLMProvider[] = ["openai", "claude", "gemini"];
@@ -186,6 +205,55 @@ export async function registerRoutes(
         if (docsWithText.length > 0) {
           const docSummaries = docsWithText.map(a => `[${a.fileName}]: ${a.extractedText!.substring(0, 3000)}`).join("\n\n");
           context += `\n\nAttached documents:\n${docSummaries}`;
+        }
+
+        // Linked nonprofits and grants from MCP integration
+        const linkedNonprofits = await storage.getDecisionNonprofits(decisionId);
+        if (linkedNonprofits.length > 0) {
+          context += `\n\nLinked nonprofit organizations:\n`;
+          for (const np of linkedNonprofits) {
+            context += `- ${np.name} (EIN: ${np.ein}) - Tax status: ${np.taxStatus || "unknown"}, Public charity: ${np.isPublicCharity ? "yes" : "unknown"}, Tax-deductible: ${np.isTaxDeductible ? "yes" : "unknown"}\n`;
+          }
+        }
+
+        const linkedGrants = await storage.getDecisionGrants(decisionId);
+        if (linkedGrants.length > 0) {
+          context += `\n\nRelated grant opportunities:\n`;
+          for (const g of linkedGrants) {
+            context += `- ${g.title} from ${g.agency || "unknown agency"} - Award range: $${g.awardFloor?.toLocaleString() || "0"}-$${g.awardCeiling?.toLocaleString() || "open"}, Closes: ${g.closeDate || "TBD"}\n`;
+          }
+        }
+      }
+    }
+
+    // PCC organizational context (always included)
+    const pccEin = (process.env.PCC_EIN || "81-1874043").replace(/-/g, "");
+    const pccProfile = await storage.getNonprofitByEin(pccEin);
+    const alertCount = await storage.getAlertCount("new");
+    const orgHistory = await storage.getOrgGrantHistory();
+
+    let pccContext = "";
+    if (pccProfile) {
+      const topFunders = orgHistory.slice(0, 3).map(g => `${g.funderName} ($${(g.amount / 1000).toFixed(0)}K)`).join(", ");
+      pccContext = `\nYour organization (${pccProfile.name}, EIN ${pccProfile.ein}):
+- Location: ${pccProfile.city || "Phoenixville"}, ${pccProfile.state || "PA"}
+- Programs: 260 Bridge Cafe, Green Lion Breads, Heart Stone Pastry, Pear Tree Coffee Roasters, Lightspire Art Studios, Frog Hollow Farm
+- Serves: Adults with intellectual disabilities, autism, mental health challenges
+${topFunders ? `- Recent grant funders: ${topFunders}` : ""}
+- Active grant alerts: ${alertCount} new opportunities matching your mission\n`;
+    }
+
+    // On-demand MCP enrichment
+    let mcpContext = "";
+    if (mcpEnrich) {
+      // Detect EINs in message
+      const einMatches = message.match(/\d{2}-?\d{7}/g);
+      if (einMatches) {
+        for (const ein of einMatches.slice(0, 2)) {
+          try {
+            const data = await charityLookup(ein);
+            mcpContext += `\n[MCP Data] ${data.name} (EIN: ${data.ein}): ${data.city}, ${data.state}. Tax status: ${data.taxStatus || "N/A"}. Deductibility: ${data.deductibility || "N/A"}.\n`;
+          } catch { /* MCP unavailable, skip */ }
         }
       }
     }
@@ -222,8 +290,9 @@ Formatting rules (CRITICAL — follow these exactly):
 ${formatRules}
 
 ${paContext}
-
-${context}`;
+${pccContext}
+${context}
+${mcpContext}`;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -410,6 +479,236 @@ ${context}`;
       console.error("Seed error:", error);
       res.status(500).json({ message: "Failed to seed demo data" });
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MCP Integration Routes — Charity, Grants, Alerts, Org Profile, Status
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // === Charity Lookup by EIN ===
+  app.get("/api/charity/lookup/:ein", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = einSchema.safeParse(req.params.ein);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await charityLookup(parsed.data);
+      // Cache in nonprofit_profiles
+      await storage.upsertNonprofitProfile({
+        ein: parsed.data.replace(/-/g, ""),
+        name: result.name,
+        city: result.city ?? null,
+        state: result.state ?? null,
+        taxStatus: result.taxStatus ?? null,
+        nteeCode: result.nteeCode ?? null,
+        rawData: result.rawData ?? null,
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        console.error(`Charity lookup error:`, error.message);
+        return res.status(502).json({ message: "Charity data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Charity Search ===
+  app.get("/api/charity/search", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = charitySearchParamsSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await charitySearch(parsed.data);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Charity data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Charity Verification ===
+  app.get("/api/charity/verify/:ein", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = einSchema.safeParse(req.params.ein);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await publicCharityCheck(parsed.data);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Charity data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Grant Discovery ===
+  app.post("/api/grants/discover", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = grantDiscoverInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await opportunityDiscovery(parsed.data);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Grants data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Agency Landscape ===
+  app.post("/api/grants/agencies", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = grantAgenciesInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await agencyLandscape(parsed.data);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Grants data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Funding Trends ===
+  app.post("/api/grants/trends", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = grantTrendsInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    try {
+      const result = await fundingTrendScanner(parsed.data);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Grants data service unavailable" });
+      }
+      throw error;
+    }
+  });
+
+  // === Grant Alerts (Proactive PA Feed) ===
+  app.get("/api/grants/alerts", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const parsed = grantAlertListParamsSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    const { status, limit, offset } = parsed.data;
+    const result = await storage.getGrantAlerts(status, limit, offset);
+    res.json(result);
+  });
+
+  // === Update Grant Alert Status ===
+  app.post("/api/grants/alerts/:id/status", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid alert ID" });
+    const parsed = grantAlertStatusUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    const alert = await storage.getGrantAlert(id);
+    if (!alert) return res.status(404).json({ message: "Grant alert not found" });
+    const updated = await storage.updateGrantAlertStatus(id, parsed.data.status);
+    res.json(updated);
+  });
+
+  // === Organization Profile (PCC) ===
+  app.get("/api/org/profile", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const pccEin = process.env.PCC_EIN || "81-1874043";
+    const normalizedEin = pccEin.replace(/-/g, "");
+
+    // Try to get cached profile first, then refresh from MCP
+    let profile = await storage.getNonprofitByEin(normalizedEin);
+    const isCacheStale = !profile || !profile.fetchedAt ||
+      (Date.now() - new Date(profile.fetchedAt).getTime() > 24 * 60 * 60 * 1000);
+
+    if (isCacheStale) {
+      try {
+        const mcpData = await charityLookup(pccEin);
+        profile = await storage.upsertNonprofitProfile({
+          ein: normalizedEin,
+          name: mcpData.name,
+          city: mcpData.city ?? null,
+          state: mcpData.state ?? null,
+          taxStatus: mcpData.taxStatus ?? null,
+          nteeCode: mcpData.nteeCode ?? null,
+          rawData: mcpData.rawData ?? null,
+        });
+      } catch {
+        // MCP unavailable — use cached profile if available
+        if (!profile) {
+          return res.status(502).json({ message: "Charity data service unavailable and no cached data" });
+        }
+      }
+    }
+
+    const [grantHistory, alertCount] = await Promise.all([
+      storage.getOrgGrantHistory(),
+      storage.getAlertCount("new"),
+    ]);
+
+    // Try to get verification data
+    let isPublicCharity: boolean | null = profile!.isPublicCharity;
+    let isTaxDeductible: boolean | null = profile!.isTaxDeductible;
+    if (isPublicCharity === null) {
+      try {
+        const verification = await publicCharityCheck(pccEin);
+        isPublicCharity = verification.isPublicCharity;
+        isTaxDeductible = verification.isTaxDeductible;
+      } catch {
+        // silently skip if MCP unavailable
+      }
+    }
+
+    res.json({
+      ein: profile!.ein,
+      name: profile!.name,
+      city: profile!.city,
+      state: profile!.state,
+      taxStatus: profile!.taxStatus,
+      isPublicCharity,
+      isTaxDeductible,
+      nteeCode: profile!.nteeCode,
+      revenue: profile!.revenue,
+      expenses: profile!.expenses,
+      assets: profile!.assets,
+      employeeCount: profile!.employeeCount,
+      grantHistory: grantHistory.map((g) => ({
+        id: g.id,
+        funderName: g.funderName,
+        amount: g.amount,
+        year: g.year,
+        sourceUrl: g.sourceUrl,
+        notes: g.notes,
+      })),
+      alertCount,
+    });
+  });
+
+  // === Manual Grant Scan Trigger ===
+  app.post("/api/admin/scan-grants", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    try {
+      const { scanForNewGrants } = await import("./services/grantAlertEngine");
+      const result = await scanForNewGrants();
+      res.json(result);
+    } catch (error) {
+      console.error("Grant scan error:", error);
+      if (error instanceof McpToolError) {
+        return res.status(502).json({ message: "Grants data service unavailable" });
+      }
+      res.status(500).json({ message: "Grant scan failed" });
+    }
+  });
+
+  // === MCP Status (public endpoint) ===
+  app.get("/api/mcp/status", async (_req, res) => {
+    const status = await getMcpStatus();
+    res.json(status);
   });
 
   return httpServer;

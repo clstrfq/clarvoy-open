@@ -1,0 +1,916 @@
+openapi: 3.1.0
+info:
+  title: Clarvoy MCP Integration API
+  version: 1.0.0
+  description: |
+    API contract for Clarvoy's MCP server integration layer.
+    Provides access to charity/nonprofit IRS data (via Charity MCP Server)
+    and federal grant opportunity data (via Grants MCP Server).
+    Includes proactive grant alerting for Partners Creating Community (EIN: 81-1874043).
+
+servers:
+  - url: http://localhost:5000
+    description: Development server
+
+tags:
+  - name: Charity
+    description: IRS charity/nonprofit data via Charity MCP Server (CharityAPI.org)
+  - name: Grants
+    description: Federal grant opportunities via Grants MCP Server (Simpler Grants API)
+  - name: Alerts
+    description: Proactive PA grant alerts filtered for PCC
+  - name: Organization
+    description: PCC organization profile and historical grant data
+  - name: MCP
+    description: MCP server connectivity status
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Express session cookie (Passport.js)
+
+  schemas:
+    # ─── Charity Schemas ────────────────────────────────────────────
+    CharityLookupResult:
+      type: object
+      required: [ein, name]
+      properties:
+        ein:
+          type: string
+          pattern: '^\d{2}-?\d{7}$'
+          example: "81-1874043"
+        name:
+          type: string
+          example: "Partners Creating Community Inc"
+        city:
+          type: string
+          nullable: true
+          example: "Phoenixville"
+        state:
+          type: string
+          nullable: true
+          maxLength: 2
+          example: "PA"
+        zipCode:
+          type: string
+          nullable: true
+        taxStatus:
+          type: string
+          nullable: true
+          example: "501(c)(3)"
+        deductibility:
+          type: string
+          nullable: true
+          example: "Contributions are deductible"
+        classificationCodes:
+          type: object
+          nullable: true
+          additionalProperties: true
+        nteeCode:
+          type: string
+          nullable: true
+          example: "F30"
+        filingRequirement:
+          type: string
+          nullable: true
+        rulingDate:
+          type: string
+          nullable: true
+        rawData:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Full response pass-through from CharityAPI
+
+    CharitySearchItem:
+      type: object
+      required: [ein, name]
+      properties:
+        ein:
+          type: string
+        name:
+          type: string
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        nteeCode:
+          type: string
+          nullable: true
+
+    CharitySearchResult:
+      type: object
+      required: [results, total, hasMore]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CharitySearchItem'
+        total:
+          type: integer
+        hasMore:
+          type: boolean
+
+    CharityVerification:
+      type: object
+      required: [ein, organizationName, isPublicCharity, isTaxDeductible, status]
+      properties:
+        ein:
+          type: string
+        organizationName:
+          type: string
+        isPublicCharity:
+          type: boolean
+        isTaxDeductible:
+          type: boolean
+        status:
+          type: string
+          example: "active"
+
+    # ─── Grant Schemas ──────────────────────────────────────────────
+    GrantOpportunity:
+      type: object
+      required: [title]
+      properties:
+        externalId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        agency:
+          type: string
+          nullable: true
+        fundingCategory:
+          type: string
+          nullable: true
+        awardFloor:
+          type: integer
+          nullable: true
+        awardCeiling:
+          type: integer
+          nullable: true
+        openDate:
+          type: string
+          format: date
+          nullable: true
+        closeDate:
+          type: string
+          format: date
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        rawData:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    GrantDiscoverInput:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 2
+          description: Search query for grant opportunities
+        filters:
+          type: object
+          nullable: true
+          additionalProperties: true
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+        grantsPerPage:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+
+    GrantDiscoverResult:
+      type: object
+      required: [opportunities, total, page]
+      properties:
+        opportunities:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantOpportunity'
+        total:
+          type: integer
+        page:
+          type: integer
+
+    GrantAgenciesInput:
+      type: object
+      properties:
+        includeOpportunities:
+          type: boolean
+          default: false
+        focusAgencies:
+          type: array
+          items:
+            type: string
+          nullable: true
+        fundingCategory:
+          type: string
+          nullable: true
+        maxAgencies:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+
+    AgencyInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        focusAreas:
+          type: array
+          items:
+            type: string
+          nullable: true
+        totalFunding:
+          type: number
+          nullable: true
+        opportunityCount:
+          type: integer
+          nullable: true
+        opportunities:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantOpportunity'
+          nullable: true
+
+    GrantAgenciesResult:
+      type: object
+      required: [agencies]
+      properties:
+        agencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgencyInfo'
+
+    GrantTrendsInput:
+      type: object
+      properties:
+        timeWindowDays:
+          type: integer
+          minimum: 7
+          maximum: 365
+          default: 90
+        categoryFilter:
+          type: string
+          nullable: true
+        agencyFilter:
+          type: string
+          nullable: true
+        minAwardAmount:
+          type: integer
+          nullable: true
+        includeForecasted:
+          type: boolean
+          default: false
+
+    FundingTrend:
+      type: object
+      required: [category]
+      properties:
+        category:
+          type: string
+        totalAmount:
+          type: number
+          nullable: true
+        opportunityCount:
+          type: integer
+          nullable: true
+        averageAward:
+          type: number
+          nullable: true
+        trend:
+          type: string
+          enum: [increasing, decreasing, stable, insufficient_data]
+          nullable: true
+
+    TrendSummary:
+      type: object
+      properties:
+        totalOpportunities:
+          type: integer
+        totalFunding:
+          type: number
+        topCategory:
+          type: string
+          nullable: true
+        timeWindowDays:
+          type: integer
+
+    GrantTrendsResult:
+      type: object
+      required: [trends, summary]
+      properties:
+        trends:
+          type: array
+          items:
+            $ref: '#/components/schemas/FundingTrend'
+        summary:
+          $ref: '#/components/schemas/TrendSummary'
+
+    # ─── Grant Alert Schemas ────────────────────────────────────────
+    GrantAlertStatus:
+      type: string
+      enum: [new, reviewed, dismissed, applied]
+
+    GrantAlert:
+      type: object
+      required: [id, grantOpportunityId, relevanceScore, status, createdAt]
+      properties:
+        id:
+          type: integer
+        grantOpportunityId:
+          type: integer
+        relevanceScore:
+          type: number
+          minimum: 0
+          maximum: 100
+        relevanceReason:
+          type: string
+          nullable: true
+        matchedKeywords:
+          type: array
+          items:
+            type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/GrantAlertStatus'
+        notifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        grant:
+          $ref: '#/components/schemas/GrantOpportunity'
+          description: Joined grant opportunity data (included in list responses)
+
+    GrantAlertListResult:
+      type: object
+      required: [alerts, total, newCount]
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantAlert'
+        total:
+          type: integer
+        newCount:
+          type: integer
+          description: Count of alerts with status "new"
+
+    GrantAlertStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/GrantAlertStatus'
+
+    # ─── Organization Profile Schemas ───────────────────────────────
+    OrgGrantHistoryEntry:
+      type: object
+      required: [funderName, amount, year]
+      properties:
+        id:
+          type: integer
+        funderName:
+          type: string
+        amount:
+          type: integer
+        year:
+          type: integer
+        sourceUrl:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
+    OrgProfile:
+      type: object
+      required: [ein, name]
+      properties:
+        ein:
+          type: string
+        name:
+          type: string
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        taxStatus:
+          type: string
+          nullable: true
+        isPublicCharity:
+          type: boolean
+          nullable: true
+        isTaxDeductible:
+          type: boolean
+          nullable: true
+        nteeCode:
+          type: string
+          nullable: true
+        revenue:
+          type: number
+          nullable: true
+        expenses:
+          type: number
+          nullable: true
+        assets:
+          type: number
+          nullable: true
+        employeeCount:
+          type: integer
+          nullable: true
+        grantHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrgGrantHistoryEntry'
+        alertCount:
+          type: integer
+          description: Number of new (unreviewed) grant alerts
+
+    # ─── MCP Status Schema ──────────────────────────────────────────
+    McpServerStatus:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+        tools:
+          type: array
+          items:
+            type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    McpStatus:
+      type: object
+      required: [grants, charity]
+      properties:
+        grants:
+          $ref: '#/components/schemas/McpServerStatus'
+        charity:
+          $ref: '#/components/schemas/McpServerStatus'
+
+    # ─── Error Schemas ──────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+paths:
+  # ─── Charity Endpoints ──────────────────────────────────────────
+  /api/charity/lookup/{ein}:
+    get:
+      tags: [Charity]
+      summary: Look up a charity by EIN
+      description: Returns detailed organization data from the IRS database via CharityAPI.
+      security:
+        - session: []
+      parameters:
+        - name: ein
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{2}-?\d{7}$'
+          description: Employer Identification Number (with or without hyphen)
+      responses:
+        '200':
+          description: Charity found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharityLookupResult'
+        '400':
+          description: Invalid EIN format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Charity not found for given EIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/charity/search:
+    get:
+      tags: [Charity]
+      summary: Search nonprofit organizations
+      description: Search for nonprofits by name, city, and state via CharityAPI.
+      security:
+        - session: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+            maxLength: 2
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharitySearchResult'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/charity/verify/{ein}:
+    get:
+      tags: [Charity]
+      summary: Verify public charity and tax-deductible status
+      description: Quick verification of an organization's public charity status and tax-deductibility.
+      security:
+        - session: []
+      parameters:
+        - name: ein
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{2}-?\d{7}$'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharityVerification'
+        '400':
+          description: Invalid EIN format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Organization not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── Grant Endpoints ────────────────────────────────────────────
+  /api/grants/discover:
+    post:
+      tags: [Grants]
+      summary: Discover grant opportunities
+      description: Search for federal grant opportunities using keyword queries and filters.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantDiscoverInput'
+      responses:
+        '200':
+          description: Grant opportunities found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantDiscoverResult'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/grants/agencies:
+    post:
+      tags: [Grants]
+      summary: Map agency funding landscape
+      description: Explore federal agencies and their funding focus areas.
+      security:
+        - session: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantAgenciesInput'
+      responses:
+        '200':
+          description: Agency landscape
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantAgenciesResult'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/grants/trends:
+    post:
+      tags: [Grants]
+      summary: Analyze funding trends
+      description: Analyze grant funding trends over a configurable time window.
+      security:
+        - session: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantTrendsInput'
+      responses:
+        '200':
+          description: Funding trend analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantTrendsResult'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── Grant Alert Endpoints ──────────────────────────────────────
+  /api/grants/alerts:
+    get:
+      tags: [Alerts]
+      summary: Get proactive PA grant alerts for PCC
+      description: |
+        Returns grant opportunities filtered for Partners Creating Community's
+        mission (disability services, vocational training, community living)
+        in Pennsylvania and applicable nationwide programs.
+        Sorted by relevance score descending.
+      security:
+        - session: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/GrantAlertStatus'
+          description: Filter by alert status. Omit for all statuses.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Grant alert list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantAlertListResult'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/grants/alerts/{id}/status:
+    post:
+      tags: [Alerts]
+      summary: Update grant alert status
+      description: Change an alert's status (e.g., mark as reviewed, dismissed, or applied).
+      security:
+        - session: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantAlertStatusUpdate'
+      responses:
+        '200':
+          description: Alert status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantAlert'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Alert not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── Organization Profile Endpoint ──────────────────────────────
+  /api/org/profile:
+    get:
+      tags: [Organization]
+      summary: Get PCC organization profile with grant history
+      description: |
+        Returns Partners Creating Community's profile data from the Charity MCP Server
+        (IRS data) combined with historical grant funding data and current alert count.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Organization profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgProfile'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable (partial data may be returned from cache)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── Admin Grant Scan Endpoint ──────────────────────────────────
+  /api/admin/scan-grants:
+    post:
+      tags: [Alerts]
+      summary: Manually trigger a grant scan
+      description: |
+        Triggers an immediate scan of the Grants MCP server for new PA-relevant
+        opportunities. Normally runs automatically every 6 hours.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Scan completed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scanned, newAlerts]
+                properties:
+                  scanned:
+                    type: integer
+                    description: Number of opportunities evaluated
+                  newAlerts:
+                    type: integer
+                    description: Number of new alerts created
+                  duration:
+                    type: number
+                    description: Scan duration in milliseconds
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: MCP server unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── MCP Status Endpoint ────────────────────────────────────────
+  /api/mcp/status:
+    get:
+      tags: [MCP]
+      summary: Check MCP server connectivity
+      description: Returns connection status for both the Grants and Charity MCP servers.
+      responses:
+        '200':
+          description: MCP status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpStatus'

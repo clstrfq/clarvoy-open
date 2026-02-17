@@ -2,6 +2,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startGrantScanner, stopGrantScanner } from "./services/grantAlertEngine";
+import { disconnectAll } from "./services/mcpClient";
 
 const app = express();
 const httpServer = createServer(app);
@@ -94,6 +96,22 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+
+      // Start proactive grant scanner (scans MCP servers for PA-relevant grants)
+      startGrantScanner();
     },
   );
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    log("Shutting down...");
+    stopGrantScanner();
+    await disconnectAll();
+    httpServer.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 })();

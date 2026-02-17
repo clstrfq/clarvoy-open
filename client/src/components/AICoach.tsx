@@ -6,11 +6,13 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, Send, Loader2, Sparkles, Paperclip } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Brain, Send, Loader2, Sparkles, Paperclip, Database } from "lucide-react";
 import { SiOpenai, SiGooglegemini } from "react-icons/si";
 import { useQuery } from "@tanstack/react-query";
 import { MicrophoneButton } from "@/components/MicrophoneButton";
 import { FileAttachments } from "@/components/FileAttachments";
+import { useMcpStatus } from "@/hooks/use-mcp-status";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -56,11 +58,13 @@ export function AICoach({ decisionId }: { decisionId: number }) {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("openai");
+  const [mcpEnrich, setMcpEnrich] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: providers } = useQuery<Provider[]>({
     queryKey: ["/api/coaching/providers"],
   });
+  const { data: mcpStatus } = useMcpStatus();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -87,6 +91,7 @@ export function AICoach({ decisionId }: { decisionId: number }) {
           message: userMessage,
           decisionId,
           provider: selectedProvider,
+          mcpEnrich,
         }),
       });
 
@@ -177,6 +182,30 @@ export function AICoach({ decisionId }: { decisionId: number }) {
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 mr-2">
+            <Switch
+              id="mcp-enrich"
+              checked={mcpEnrich}
+              onCheckedChange={setMcpEnrich}
+              disabled={isStreaming}
+            />
+            <label htmlFor="mcp-enrich" className="text-xs text-muted-foreground cursor-pointer flex items-center gap-1">
+              <Database className="w-3 h-3" />
+              MCP Data
+            </label>
+            {mcpStatus && (
+              <div className="flex gap-1">
+                <div
+                  className={`w-1.5 h-1.5 rounded-full ${mcpStatus.grants.connected ? "bg-green-400" : "bg-red-400"}`}
+                  title={`Grants: ${mcpStatus.grants.connected ? "connected" : "disconnected"}`}
+                />
+                <div
+                  className={`w-1.5 h-1.5 rounded-full ${mcpStatus.charity.connected ? "bg-green-400" : "bg-red-400"}`}
+                  title={`Charity: ${mcpStatus.charity.connected ? "connected" : "disconnected"}`}
+                />
+              </div>
+            )}
+          </div>
           <span className="text-xs text-muted-foreground">Model:</span>
           <Select value={selectedProvider} onValueChange={setSelectedProvider} disabled={isStreaming}>
             <SelectTrigger className="w-[180px]" data-testid="select-llm-provider">

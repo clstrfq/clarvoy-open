@@ -107,6 +107,36 @@ export const api = {
   },
 };
 
+// MCP Integration API contracts (charity, grants, alerts, org profile)
+export { mcpApi } from "./mcp-schemas";
+export type {
+  CharityLookupResult,
+  CharitySearchItem,
+  CharitySearchParams,
+  CharitySearchResult,
+  CharityVerification,
+  GrantOpportunity,
+  GrantDiscoverInput,
+  GrantDiscoverResult,
+  GrantAgenciesInput,
+  AgencyInfo,
+  GrantAgenciesResult,
+  GrantTrendsInput,
+  FundingTrend,
+  TrendSummary,
+  GrantTrendsResult,
+  GrantAlertStatus,
+  GrantAlert,
+  GrantAlertListResult,
+  GrantAlertStatusUpdate,
+  GrantAlertListParams,
+  OrgGrantHistoryEntry,
+  OrgProfile,
+  McpServerStatus,
+  McpStatus,
+  ScanResult,
+} from "./mcp-schemas";
+
 export function buildUrl(path: string, params?: Record<string, string | number>): string {
   let url = path;
   if (params) {

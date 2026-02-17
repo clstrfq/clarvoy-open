@@ -325,6 +325,20 @@ export async function seedDemoData(storage: IStorage) {
   }
 
   console.log(`Seeded ${USE_CASES.length} demo decisions with judgments and ${24 + extraBiasEntries.length + USE_CASES.length * 2} audit log entries`);
+
+  // ─── Seed PCC Grant History ────────────────────────────────────────────────
+  const pccGrantHistory = [
+    { funderName: "Partners Foundation", amount: 433353, year: 2022, sourceUrl: "https://www.propublica.org/", notes: "Multi-year unrestricted operating support" },
+    { funderName: "Ackerman Foundation", amount: 50000, year: 2024, sourceUrl: null, notes: "Program support for vocational training" },
+    { funderName: "Phoenixville Area Economic Development Corporation", amount: 45000, year: 2023, sourceUrl: null, notes: "Social enterprise development (260 Bridge Cafe expansion)" },
+    { funderName: "The Tow Foundation", amount: 5000, year: 2023, sourceUrl: null, notes: "General operating support" },
+    { funderName: "Eleanore Bennett Charitable Trust #1", amount: 2500, year: 2023, sourceUrl: null, notes: "Program support" },
+  ];
+
+  for (const entry of pccGrantHistory) {
+    await storage.createOrgGrantHistory(entry);
+  }
+  console.log(`Seeded ${pccGrantHistory.length} PCC grant history entries`);
 }
 
 function randomDateInLastWeek(daysAgo: number): Date {

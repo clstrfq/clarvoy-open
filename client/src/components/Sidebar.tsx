@@ -9,13 +9,17 @@ import {
   LogOut,
   ShieldCheck,
   User,
-  BookOpen
+  BookOpen,
+  Building2,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useAlertCount } from "@/hooks/use-grant-alerts";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function Sidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+  const alertCount = useAlertCount();
 
   const isActive = (path: string) => location === path;
 
@@ -60,6 +64,20 @@ export function Sidebar() {
           >
             <BookOpen className="w-4 h-4" />
             PA Use Cases
+          </Button>
+        </Link>
+        <Link href="/nonprofits" className="block">
+          <Button
+            variant={isActive("/nonprofits") ? "secondary" : "ghost"}
+            className="w-full justify-start gap-3 text-sm font-medium h-10"
+          >
+            <Building2 className="w-4 h-4" />
+            Nonprofit Data
+            {alertCount > 0 && (
+              <Badge variant="destructive" className="ml-auto text-xs h-5 px-1.5">
+                {alertCount}
+              </Badge>
+            )}
           </Button>
         </Link>
         <Link href="/admin" className="block">
