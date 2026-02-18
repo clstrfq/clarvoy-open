@@ -4,6 +4,15 @@ import bcrypt from "bcrypt";
 import { authStorage } from "./storage";
 import { isAuthenticated } from "./localAuth";
 
+function regenerateSession(req: any): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err: any) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
 export function registerAuthRoutes(app: Express): void {
   // Register new user
   app.post("/api/auth/register", async (req: any, res) => {
@@ -34,6 +43,7 @@ export function registerAuthRoutes(app: Express): void {
         lastName: lastName || null,
       });
 
+      await regenerateSession(req);
       // Log user in immediately after registration
       req.login(user, (err: any) => {
         if (err) {
@@ -61,17 +71,21 @@ export function registerAuthRoutes(app: Express): void {
       if (!user) {
         return res.status(401).json({ message: info?.message || "Invalid credentials" });
       }
-      req.login(user, (err: any) => {
-        if (err) return next(err);
-        return res.json({
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          profileImageUrl: user.profileImageUrl,
-        });
-      });
+      regenerateSession(req)
+        .then(() => {
+          req.login(user, (loginErr: any) => {
+            if (loginErr) return next(loginErr);
+            return res.json({
+              id: user.id,
+              email: user.email,
+              username: user.username,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              profileImageUrl: user.profileImageUrl,
+            });
+          });
+        })
+        .catch(next);
     })(req, res, next);
   });
 
@@ -103,7 +117,13 @@ export function registerAuthRoutes(app: Express): void {
       if (err) {
         return res.status(500).json({ message: "Logout failed" });
       }
-      res.json({ message: "Logged out" });
+      req.session.destroy((destroyErr: any) => {
+        if (destroyErr) {
+          return res.status(500).json({ message: "Logout failed" });
+        }
+        res.clearCookie("connect.sid");
+        res.json({ message: "Logged out" });
+      });
     });
   });
 }

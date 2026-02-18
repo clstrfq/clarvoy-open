@@ -6,8 +6,16 @@ import connectPg from "connect-pg-simple";
 import bcrypt from "bcrypt";
 import { authStorage } from "./storage";
 
+export function getRequiredSessionSecret(envSecret: string | undefined): string {
+  if (!envSecret) {
+    throw new Error("SESSION_SECRET must be set");
+  }
+  return envSecret;
+}
+
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const sessionSecret = getRequiredSessionSecret(process.env.SESSION_SECRET);
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -16,7 +24,7 @@ export function getSession() {
     tableName: "sessions",
   });
   return session({
-    secret: process.env.SESSION_SECRET || "clarvoy-dev-secret",
+    secret: sessionSecret,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,

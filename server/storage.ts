@@ -32,6 +32,7 @@ export interface IStorage {
   createAttachment(attachment: InsertAttachment & { userId: string; extractedText?: string | null }): Promise<Attachment>;
   getAttachments(decisionId: number): Promise<Attachment[]>;
   getAttachment(id: number): Promise<Attachment | undefined>;
+  getAttachmentByObjectPath(objectPath: string): Promise<Attachment | undefined>;
   updateAttachmentText(id: number, extractedText: string): Promise<Attachment>;
   deleteAttachment(id: number): Promise<void>;
 
@@ -131,6 +132,11 @@ export class DatabaseStorage implements IStorage {
 
   async getAttachment(id: number): Promise<Attachment | undefined> {
     const [attachment] = await db.select().from(attachments).where(eq(attachments.id, id));
+    return attachment;
+  }
+
+  async getAttachmentByObjectPath(objectPath: string): Promise<Attachment | undefined> {
+    const [attachment] = await db.select().from(attachments).where(eq(attachments.objectPath, objectPath));
     return attachment;
   }
 

@@ -1,6 +1,6 @@
 export * from "./models/auth";
 export * from "./models/chat";
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, varchar, date, real } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, varchar, date, real, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
@@ -28,7 +28,9 @@ export const judgments = pgTable("judgments", {
   score: integer("score").notNull(),
   rationale: text("rationale").notNull(),
   submittedAt: timestamp("submitted_at").defaultNow(),
-});
+}, (table) => ({
+  oneJudgmentPerUserPerDecision: uniqueIndex("judgments_decision_user_uidx").on(table.decisionId, table.userId),
+}));
 
 export const comments = pgTable("comments", {
   id: serial("id").primaryKey(),
@@ -211,7 +213,10 @@ export const attachmentsRelations = relations(attachments, ({ one }) => ({
 }));
 
 export const insertDecisionSchema = createInsertSchema(decisions).omit({ id: true, createdAt: true, updatedAt: true, authorId: true });
-export const insertJudgmentSchema = createInsertSchema(judgments).omit({ id: true, submittedAt: true, userId: true });
+export const insertJudgmentSchema = createInsertSchema(judgments, {
+  score: z.number().int().min(1).max(10),
+  rationale: z.string().min(20, "Rationale must be at least 20 characters."),
+}).omit({ id: true, submittedAt: true, userId: true });
 export const insertCommentSchema = createInsertSchema(comments).omit({ id: true, createdAt: true, userId: true, isAiGenerated: true });
 export const insertAttachmentSchema = createInsertSchema(attachments).omit({ id: true, createdAt: true, userId: true, extractedText: true });
 export const insertReferenceClassSchema = createInsertSchema(referenceClasses).omit({ id: true, createdAt: true });

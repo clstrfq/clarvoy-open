@@ -3,6 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
+const STORED_FILE_NAME_RE = /^[0-9a-fA-F-]{36}\.[a-zA-Z0-9]+$/;
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -20,19 +21,34 @@ export class FileStorageService {
   }
 
   async readFile(fileName: string): Promise<Buffer> {
-    const filePath = path.join(UPLOAD_DIR, fileName);
+    const filePath = this.resolveSafeUploadPath(fileName);
     return await fs.promises.readFile(filePath);
   }
 
   async deleteFile(fileName: string): Promise<void> {
-    const filePath = path.join(UPLOAD_DIR, fileName);
+    const filePath = this.resolveSafeUploadPath(fileName);
     if (fs.existsSync(filePath)) {
       await fs.promises.unlink(filePath);
     }
   }
 
   getFilePath(fileName: string): string {
-    return path.join(UPLOAD_DIR, fileName);
+    return this.resolveSafeUploadPath(fileName);
+  }
+
+  isStoredFileNameSafe(fileName: string): boolean {
+    return STORED_FILE_NAME_RE.test(fileName);
+  }
+
+  private resolveSafeUploadPath(fileName: string): string {
+    if (!this.isStoredFileNameSafe(fileName)) {
+      throw new Error("Invalid upload file name");
+    }
+    const resolved = path.resolve(UPLOAD_DIR, fileName);
+    if (!resolved.startsWith(`${UPLOAD_DIR}${path.sep}`)) {
+      throw new Error("Unsafe upload file path");
+    }
+    return resolved;
   }
 }
 

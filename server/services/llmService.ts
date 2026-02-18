@@ -11,6 +11,7 @@ export interface LLMStreamOptions {
   onChunk: (content: string) => void;
   onDone: () => void;
   onError: (error: string) => void;
+  shouldAbort?: () => boolean;
 }
 
 const openai = new OpenAI({
@@ -32,18 +33,18 @@ export const PROVIDER_INFO: Record<LLMProvider, { name: string; model: string }>
 };
 
 export async function streamLLMResponse(options: LLMStreamOptions): Promise<void> {
-  const { provider, systemPrompt, userMessage, onChunk, onDone, onError } = options;
+  const { provider, systemPrompt, userMessage, onChunk, onDone, onError, shouldAbort } = options;
 
   try {
     switch (provider) {
       case "openai":
-        await streamOpenAI(systemPrompt, userMessage, onChunk, onDone);
+        await streamOpenAI(systemPrompt, userMessage, onChunk, onDone, shouldAbort);
         break;
       case "claude":
-        await streamClaude(systemPrompt, userMessage, onChunk, onDone);
+        await streamClaude(systemPrompt, userMessage, onChunk, onDone, shouldAbort);
         break;
       case "gemini":
-        await streamGemini(systemPrompt, userMessage, onChunk, onDone);
+        await streamGemini(systemPrompt, userMessage, onChunk, onDone, shouldAbort);
         break;
       default:
         onError(`Unknown provider: ${provider}`);
@@ -58,7 +59,8 @@ async function streamOpenAI(
   systemPrompt: string,
   userMessage: string,
   onChunk: (content: string) => void,
-  onDone: () => void
+  onDone: () => void,
+  shouldAbort?: () => boolean
 ) {
   const stream = await openai.chat.completions.create({
     model: PROVIDER_INFO.openai.model,
@@ -71,9 +73,11 @@ async function streamOpenAI(
   });
 
   for await (const chunk of stream) {
+    if (shouldAbort?.()) return;
     const content = chunk.choices[0]?.delta?.content || "";
     if (content) onChunk(content);
   }
+  if (shouldAbort?.()) return;
   onDone();
 }
 
@@ -81,7 +85,8 @@ async function streamClaude(
   systemPrompt: string,
   userMessage: string,
   onChunk: (content: string) => void,
-  onDone: () => void
+  onDone: () => void,
+  shouldAbort?: () => boolean
 ) {
   const stream = anthropic.messages.stream({
     model: PROVIDER_INFO.claude.model,
@@ -91,11 +96,13 @@ async function streamClaude(
   });
 
   for await (const event of stream) {
+    if (shouldAbort?.()) return;
     if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       const content = event.delta.text;
       if (content) onChunk(content);
     }
   }
+  if (shouldAbort?.()) return;
   onDone();
 }
 
@@ -103,7 +110,8 @@ async function streamGemini(
   systemPrompt: string,
   userMessage: string,
   onChunk: (content: string) => void,
-  onDone: () => void
+  onDone: () => void,
+  shouldAbort?: () => boolean
 ) {
   const stream = await gemini.models.generateContentStream({
     model: PROVIDER_INFO.gemini.model,
@@ -117,8 +125,10 @@ async function streamGemini(
   });
 
   for await (const chunk of stream) {
+    if (shouldAbort?.()) return;
     const content = chunk.text || "";
     if (content) onChunk(content);
   }
+  if (shouldAbort?.()) return;
   onDone();
 }

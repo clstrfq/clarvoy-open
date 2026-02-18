@@ -13,11 +13,20 @@ export function calculateVariance(scores: number[], threshold: number = 1.5): Va
 
   const n = scores.length;
   const mean = scores.reduce((a, b) => a + b, 0) / n;
-
-  const variance = scores.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n - 1 || 1);
+  if (n < 2) {
+    return {
+      mean: Number(mean.toFixed(4)),
+      stdDev: 0,
+      cv: 0,
+      isHighNoise: false,
+      scoreCount: n,
+    };
+  }
+  const variance = scores.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n - 1);
   const stdDev = Math.sqrt(variance);
-
-  const cv = mean !== 0 ? stdDev / mean : Infinity;
+  const safeMean = Math.abs(mean) < 1e-9 ? 0 : mean;
+  const rawCv = safeMean === 0 ? 0 : stdDev / safeMean;
+  const cv = Number.isFinite(rawCv) ? rawCv : 0;
 
   return {
     mean: Number(mean.toFixed(4)),
